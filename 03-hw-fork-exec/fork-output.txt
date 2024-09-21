@@ -1,0 +1,3 @@
+BEFORE FORK (3)
+SECTION C (3)
+foobar
