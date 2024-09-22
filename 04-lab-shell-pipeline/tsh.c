@@ -131,71 +131,59 @@ void eval(char *cmdline) {
 	int num_commands = parseargs(argv, cmds, stdin_redir, stdout_redir);
 	char** envp = { NULL };
 
-	/*
-	for (int i = 0; i < num_commands - 1; ++i) {
+	if (num_commands > 1) {
 		int pipefd[2];
-		int success = pipe(pipefd);
+		int pgid;
+		int prev_pipe_read = -1;
 
-		int leftpid = fork();
-		if (leftpid == 0) { // Left child
-
-		} else if (leftpid > 0) {
-			int rightpid = fork();
-			if (rightpid == 0) { // Right child
-
-			} else if (rightpid > 0) { // Parent
-
-			} else {
-				// error
+		for (int i = 0; i < num_commands; ++i) {
+			if (i != num_commands - 1) {
+				if (pipe(pipefd) == -1) {
+					perror("pipe");
+					exit(1);
+				}
 			}
-		} else {
-			// error
-		}
-	}
-	*/
 
-	if (num_commands == 2) {
-		int pipefd[2];
-		if (pipe(pipefd) == -1) {
-			// error
-		}
+			int pid = fork();
+			if (pid == 0) { // Child
+				if (i != 0) {
+					dup2(prev_pipe_read, STDIN_FILENO);
+					close(prev_pipe_read);
+				}
 
-		pid_t leftpid = fork();
-		if (leftpid == 0) { // Left child
-			int command_num = 0;
-			ioredir(argv, stdin_redir[command_num], stdout_redir[command_num]);
+				if (i != num_commands - 1) {
+					close(pipefd[0]);
+					dup2(pipefd[1], STDOUT_FILENO);
+					close(pipefd[1]);
+				}
 
-			close(pipefd[0]);
-			dup2(pipefd[1], STDOUT_FILENO);
-			close(pipefd[1]);
+				ioredir(argv, stdin_redir[i], stdout_redir[i]);
+				execve(argv[cmds[i]], &argv[cmds[i]], envp);
 
-			execve(argv[cmds[command_num]], &argv[cmds[command_num]], envp);
-		} else if (leftpid > 0) {
-			setpgid(leftpid, leftpid);
+				perror("execve failed");
+				exit(1);
+			} else if (pid > 0) { // Parent
+				if (i == 0) {
+					pgid = pid;
+				}
+				setpgid(pid, pgid);
 
-			pid_t rightpid = fork();
-			if (rightpid == 0) { // Right child
-				int command_num = 1;
-				ioredir(argv, stdin_redir[command_num], stdout_redir[command_num]);
-
-				close(pipefd[1]);
-				dup2(pipefd[0], STDIN_FILENO);
-            	close(pipefd[0]);
-
-				execve(argv[cmds[command_num]], &argv[cmds[command_num]], envp);
-			} else if (rightpid > 0) { // Parent
-				setpgid(rightpid, leftpid);
-
-				close(pipefd[0]);
-            	close(pipefd[1]);
-
-				waitpid(leftpid, NULL, 0);
-				waitpid(rightpid, NULL, 0);
+				if (prev_pipe_read != -1) {
+					close(prev_pipe_read);
+				}
+				if (i != num_commands - 1) {
+					close(pipefd[1]);
+				}
+				prev_pipe_read = pipefd[0];
 			} else {
-				// error
+				perror("fork failed");
+				exit(1);
 			}
-		} else {
-			// error
+		}
+
+		// Wait for all children to finish after the loop
+		for (int i = 0; i < num_commands; ++i) {
+			wait(NULL);
 		}
 	} else {
 		pid_t pid = fork();
@@ -204,9 +192,12 @@ void eval(char *cmdline) {
 			ioredir(argv, stdin_redir[0], stdout_redir[0]);
 			char** envp = { NULL };
 			execve(argv[cmds[command_num]], &argv[cmds[command_num]], envp);
-		} else { // Parent
+		} else if (pid > 0) { // Parent
 			setpgid(pid, pid);
 			waitpid(pid, NULL, 0);
+		} else {
+			perror("fork failed");
+			exit(1);
 		}
 	}
     return;
