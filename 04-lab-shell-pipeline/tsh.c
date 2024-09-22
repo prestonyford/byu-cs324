@@ -12,6 +12,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 /* Misc manifest constants */
 #define MAXLINE    1024   /* max line size */
@@ -91,6 +93,22 @@ int main(int argc, char **argv)
 
 	exit(0); /* control never reaches here */
 }
+
+void ioredir(char* argv[], int stdin_redir_arg, int stdout_redir_arg) {
+	int desc = -1;
+	// check for stdin redir
+	if (stdin_redir_arg > 0) {
+		desc = open(argv[stdin_redir_arg], O_RDONLY);
+		dup2(desc, STDIN_FILENO);
+		close(desc);
+	}
+	// check for stdout redir
+	if (stdout_redir_arg > 0) {
+		desc = open(argv[stdout_redir_arg], O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+		dup2(desc, STDOUT_FILENO);
+		close(desc);
+	}
+}
   
 /* 
  * eval - Evaluate the command line that the user has just typed in
@@ -99,9 +117,99 @@ int main(int argc, char **argv)
  * immediately. Otherwise, build a pipeline of commands and wait for all of
  * them to complete before returning.
 */
-void eval(char *cmdline) 
-{
-	return;
+void eval(char *cmdline) {
+	char* argv[MAXARGS];
+    /*int background = */ parseline(cmdline, argv);
+
+	if (builtin_cmd(argv) != 0) {
+		return;
+	}
+	int cmds[MAXARGS/2];
+	int stdin_redir[MAXARGS/2];
+	int stdout_redir[MAXARGS/2];
+
+	int num_commands = parseargs(argv, cmds, stdin_redir, stdout_redir);
+	char** envp = { NULL };
+
+	/*
+	for (int i = 0; i < num_commands - 1; ++i) {
+		int pipefd[2];
+		int success = pipe(pipefd);
+
+		int leftpid = fork();
+		if (leftpid == 0) { // Left child
+
+		} else if (leftpid > 0) {
+			int rightpid = fork();
+			if (rightpid == 0) { // Right child
+
+			} else if (rightpid > 0) { // Parent
+
+			} else {
+				// error
+			}
+		} else {
+			// error
+		}
+	}
+	*/
+
+	if (num_commands == 2) {
+		int pipefd[2];
+		if (pipe(pipefd) == -1) {
+			// error
+		}
+
+		pid_t leftpid = fork();
+		if (leftpid == 0) { // Left child
+			int command_num = 0;
+			ioredir(argv, stdin_redir[command_num], stdout_redir[command_num]);
+
+			close(pipefd[0]);
+			dup2(pipefd[1], STDOUT_FILENO);
+			close(pipefd[1]);
+
+			execve(argv[cmds[command_num]], &argv[cmds[command_num]], envp);
+		} else if (leftpid > 0) {
+			setpgid(leftpid, leftpid);
+
+			pid_t rightpid = fork();
+			if (rightpid == 0) { // Right child
+				int command_num = 1;
+				ioredir(argv, stdin_redir[command_num], stdout_redir[command_num]);
+
+				close(pipefd[1]);
+				dup2(pipefd[0], STDIN_FILENO);
+            	close(pipefd[0]);
+
+				execve(argv[cmds[command_num]], &argv[cmds[command_num]], envp);
+			} else if (rightpid > 0) { // Parent
+				setpgid(rightpid, leftpid);
+
+				close(pipefd[0]);
+            	close(pipefd[1]);
+
+				waitpid(leftpid, NULL, 0);
+				waitpid(rightpid, NULL, 0);
+			} else {
+				// error
+			}
+		} else {
+			// error
+		}
+	} else {
+		pid_t pid = fork();
+		if (pid == 0) { // Child
+			int command_num = 0;
+			ioredir(argv, stdin_redir[0], stdout_redir[0]);
+			char** envp = { NULL };
+			execve(argv[cmds[command_num]], &argv[cmds[command_num]], envp);
+		} else { // Parent
+			setpgid(pid, pid);
+			waitpid(pid, NULL, 0);
+		}
+	}
+    return;
 }
 
 /* 
@@ -228,6 +336,9 @@ int parseline(const char *cmdline, char **argv)
  */
 int builtin_cmd(char **argv) 
 {
+	if (strcmp(argv[0], "quit") == 0) {
+		exit(0);
+	}
 	return 0;     /* not a builtin command */
 }
 
