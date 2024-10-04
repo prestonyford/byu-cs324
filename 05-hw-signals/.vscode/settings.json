@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.ejs": "html",
+        "types.h": "c",
+        "wait.h": "c",
+        "errno.h": "c"
+    }
+}
