@@ -118,7 +118,7 @@ int main(int argc, char **argv)
 	/* Install the signal handlers */
 
 	/* These are the ones you will need to implement */
-	// Signal(SIGINT,  sigint_handler);   /* ctrl-c */
+	Signal(SIGINT,  sigint_handler);   /* ctrl-c */
 	Signal(SIGTSTP, sigtstp_handler);  /* ctrl-z */
 	Signal(SIGCHLD, sigchld_handler);  /* Terminated or stopped child */
 
@@ -182,12 +182,13 @@ void eval(char *cmdline)
 			sigprocmask(SIG_SETMASK, &prev_mask, NULL);
 			execve(argv[0], argv, NULL);
 			printf("%s: Command not found\n", argv[0]);
+			exit(1);
 		} else {
 			setpgid(pid, pid);
 			addjob(jobs, pid, bg ? BG : FG, cmdline);
 			sigprocmask(SIG_SETMASK, &prev_mask, NULL);
 			if (!bg) {
-				waitpid(pid, NULL, 0); // replace with waitfg()
+				waitfg(pid);
 			} else {
 				printf("[%d] (%d) %s", getjobpid(jobs, pid)->jid, pid, cmdline);
 			}
@@ -285,6 +286,10 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+	struct job_t *job = getjobpid(jobs, pid);
+	while (job->state == FG) {
+		sleep(1);
+	}
 	return;
 }
 
@@ -301,6 +306,25 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
+	if (verbose)
+		printf("sigchld_handler: entering\n");
+
+	int wstatus;
+	int pid;
+	while ((pid = waitpid(-1, &wstatus, WNOHANG | WUNTRACED)) > 0) {
+		struct job_t *job = getjobpid(jobs, pid);
+		if (WIFSTOPPED(wstatus)) {
+			job->state = ST;
+			printf("Job [%d] (%d) stopped by signal 20\n", job->jid, pid);
+		}
+		if (WIFSIGNALED(wstatus)) {
+			printf("Job [%d] (%d) terminated by signal 2\n", job->jid, pid);
+			deletejob(jobs, pid);
+		}
+		if (WIFEXITED(wstatus)) {
+			deletejob(jobs, pid);
+		}
+	}
 	return;
 }
 
