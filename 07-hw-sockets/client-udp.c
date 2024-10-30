@@ -46,7 +46,7 @@ int main(int argc, char *argv[]) {
 	// was passed in on the command line.
 	hints.ai_family = af;
 	// Use type SOCK_DGRAM (UDP)
-	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_socktype = SOCK_DGRAM;
 
 
 	/* SECTION A - pre-socket setup; getaddrinfo() */
@@ -122,7 +122,7 @@ int main(int argc, char *argv[]) {
 
 		// If connect() succeeds, then break out of the loop; we will
 		// use the current address as our remote address.
-		if (connect(sfd, remote_addr, addr_len) >= 0)
+//		if (connect(sfd, remote_addr, addr_len) >= 0)
 			break;
 
 		close(sfd);
@@ -155,68 +155,39 @@ int main(int argc, char *argv[]) {
 
 	// Send remaining command-line arguments as separate
 	// datagrams, and read responses from server.
-	// for (int j = hostindex + 2; j < argc; j++) {
-	// 	// buf will hold the bytes we read from the socket.
-	// 	char buf[BUF_SIZE];
+	for (int j = hostindex + 2; j < argc; j++) {
+		// buf will hold the bytes we read from the socket.
+		char buf[BUF_SIZE];
 
-	// 	// len includes the count of all characters comprising the
-	// 	// null-terminated string argv[j], but not the null byte
-	// 	// itself.
-	// 	size_t len = strlen(argv[j]);
-	// 	if (len > BUF_SIZE) {
-	// 		fprintf(stderr,
-	// 				"Ignoring long message in argument %d\n", j);
-	// 		continue;
-	// 	}
+		// len includes the count of all characters comprising the
+		// null-terminated string argv[j], but not the null byte
+		// itself.
+		size_t len = strlen(argv[j]);
+		if (len > BUF_SIZE) {
+			fprintf(stderr,
+					"Ignoring long message in argument %d\n", j);
+			continue;
+		}
 
-	// 	ssize_t nwritten = send(sfd, argv[j], len, 0);
+//		ssize_t nwritten = send(sfd, argv[j], len, 0);
+		ssize_t nwritten = sendto(sfd, argv[j], len, 0, remote_addr, addr_len);
 
-	// 	if (nwritten < 0) {
-	// 		perror("send");
-	// 		exit(EXIT_FAILURE);
-	// 	}
-	// 	printf("Sent %zd bytes: %s\n", len, argv[j]);
+		if (nwritten < 0) {
+			perror("send");
+			exit(EXIT_FAILURE);
+		}
+		printf("Sent %zd bytes: %s\n", len, argv[j]);
 
-	// 	// ssize_t nread = recv(sfd, buf, BUF_SIZE, 0);
-	// 	// buf[nread] = '\0';
-	// 	// if (nread < 0) {
-	// 	// 	perror("read");
-	// 	// 	exit(EXIT_FAILURE);
-	// 	// }
+		// ssize_t nread = recv(sfd, buf, BUF_SIZE, 0);
+		// buf[nread] = '\0';
+		// if (nread < 0) {
+		// 	perror("read");
+		// 	exit(EXIT_FAILURE);
+		// }
 
-	// 	// printf("Received %zd bytes: %s\n", nread, buf);
+		// printf("Received %zd bytes: %s\n", nread, buf);
 
-	// }
-
-	const int BUFF_SIZE = 4096;
-	unsigned char buff[BUFF_SIZE];
-	ssize_t curr_read;
-	ssize_t total_read = 0;
-	while ((curr_read = read(STDIN_FILENO, buff + total_read, 512)) > 0) {
-		total_read += curr_read;
 	}
 
-	ssize_t total_sent = 0;
-	ssize_t sent;
-	while (total_sent < total_read) {
-        size_t bytes_left = total_read - total_sent;
-        size_t chunk_size = (bytes_left < 512) ? bytes_left : 512;
-
-        sent = send(sfd, buff + total_sent, chunk_size, 0);
-        if (sent == -1) {
-            perror("send");
-            return -1;
-        }
-        total_sent += sent;
-    }
-
-	unsigned char rec_buff[16384];
-	ssize_t bytes_received = 0;
-	ssize_t total_bytes_received = 0;
-	while ((bytes_received = recv(sfd, rec_buff + total_bytes_received, 512, 0)) > 0) {
-		total_bytes_received += bytes_received;
-	}
-	write(STDOUT_FILENO, rec_buff, total_bytes_received);
-	
 	exit(EXIT_SUCCESS);
 }
