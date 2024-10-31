@@ -29,13 +29,14 @@ int main(int argc, char *argv[]) {
 	// printf("Level: %d\n", level);
 	// printf("Seed: %d\n", seed);
 
-	unsigned char request[8];
-	request[0] = 0x0;
-	request[1] = level;
+	size_t request_size = 8;
+	unsigned char initial_request[8];
+	initial_request[0] = 0x0;
+	initial_request[1] = level;
 	uint32_t userID_n = htonl(USERID);
 	uint16_t seed_n = htons(seed);
-	memcpy(&request[2], &userID_n, 4);
-	memcpy(&request[6], &seed_n, 2);
+	memcpy(&initial_request[2], &userID_n, 4);
+	memcpy(&initial_request[6], &seed_n, 2);
 
 	// print_bytes(request, 8);
 
@@ -83,40 +84,57 @@ int main(int argc, char *argv[]) {
 		// close(sfd);
 	}
 
-	ssize_t nwritten = sendto(sfd, request, 8, 0, remote_addr, addr_len);
-	if (nwritten < 0) {
-		perror("send");
-		exit(EXIT_FAILURE);
-	}
+	unsigned char allchunks[1025];
+	ssize_t total_received = 0;
 
-	unsigned char buf[256];
-	ssize_t nreceived = recvfrom(sfd, buf, sizeof(buf), 0, remote_addr, &addr_len);
-	printf("Response received: %ld bytes\n", nreceived);
-	print_bytes(buf, nreceived);
-	printf("\n");
-
-	unsigned char chunklen = buf[0];
-
-	char chunk[chunklen + 1];
-	memcpy(chunk, &buf[1], chunklen);
-	chunk[chunklen] = 0x0;
-
-	unsigned char opcode = buf[chunklen + 1];
-
+	unsigned char *request = initial_request;
+	unsigned char chunklen;
+	unsigned char opcode;
 	unsigned short opparam;
-	memcpy(&opparam, &buf[chunklen + 2], 2);
-	opparam = ntohs(opparam);
-
 	unsigned int nonce;
-	memcpy(&nonce, &buf[chunklen + 4], 4);
-	nonce = ntohl(nonce);
+	do {
+		ssize_t nwritten = sendto(sfd, request, request_size, 0, remote_addr, addr_len);
+		if (nwritten < 0) {
+			perror("send");
+			exit(EXIT_FAILURE);
+		}
 
-	printf("%x\n", chunklen);
-	printf("%s\n", chunk);
-	printf("%x\n", opcode);
-	printf("%x\n", opparam);
-	printf("%x\n", nonce);
-	}
+		unsigned char buf[256];
+		ssize_t nreceived = recvfrom(sfd, buf, sizeof(buf), 0, remote_addr, &addr_len);
+
+		// chunklen, chunk, opcode, opparam, nonce
+		chunklen = buf[0];
+		char chunk[chunklen + 1];
+		memcpy(chunk, &buf[1], chunklen);
+		chunk[chunklen] = 0x0;
+		opcode = buf[chunklen + 1];
+		memcpy(&opparam, &buf[chunklen + 2], 2);
+		opparam = ntohs(opparam);
+		memcpy(&nonce, &buf[chunklen + 4], 4);
+		nonce = ntohl(nonce);
+
+		memcpy(&allchunks[total_received], chunk, chunklen);
+		total_received += chunklen;
+		// printf("%x\n", chunklen);
+		// printf("%s\n", chunk);
+		// printf("%x\n", opcode);
+		// printf("%x\n", opparam);
+		// printf("%x\n", nonce);
+
+		memset(request, 0, request_size);
+		request_size = sizeof(nonce);
+		int nextnonce = htonl(nonce + 1);
+		memcpy(request, &nextnonce, request_size);
+	} while (chunklen);
+
+	allchunks[total_received] = 0x0;
+	printf("%s\n", allchunks);
+	
+	// printf("Response received: %ld bytes\n", nreceived);
+	// print_bytes(buf, nreceived);
+	// printf("\n");
+
+}
 
 void print_bytes(unsigned char *bytes, int byteslen) {
 	int i, j, byteslen_adjusted;
