@@ -4,6 +4,9 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <netdb.h>
 
 #include "sockhelper.h"
 
@@ -18,14 +21,102 @@ int main(int argc, char *argv[]) {
 	}
 	char *server = argv[1];
 	char *port = argv[2];
-	int level = atoi(argv[3]);
-	int seed = atoi(argv[4]);
+	unsigned char level = atoi(argv[3]);
+	short seed = atoi(argv[4]);
 
-	printf("Server: %s\n", server);
-	printf("Port: %s\n", port);
-	printf("Level: %d\n", level);
-	printf("Seed: %d\n", seed);
-}
+	// printf("Server: %s\n", server);
+	// printf("Port: %s\n", port);
+	// printf("Level: %d\n", level);
+	// printf("Seed: %d\n", seed);
+
+	unsigned char request[8];
+	request[0] = 0x0;
+	request[1] = level;
+	uint32_t userID_n = htonl(USERID);
+	uint16_t seed_n = htons(seed);
+	memcpy(&request[2], &userID_n, 4);
+	memcpy(&request[6], &seed_n, 2);
+
+	// print_bytes(request, 8);
+
+	struct addrinfo hints;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_UNSPEC; // Allow IPv4 or IPv6
+	hints.ai_socktype = SOCK_DGRAM; // UDP socket
+	struct addrinfo *result;
+
+	int status = getaddrinfo(server, port, &hints, &result);
+	if (status != 0) {
+		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
+		exit(EXIT_FAILURE);
+	}
+
+	int sfd;
+	int addr_fam;
+	socklen_t addr_len;
+
+	struct sockaddr_storage local_addr_ss;
+	struct sockaddr *local_addr = (struct sockaddr *)&local_addr_ss;
+	struct sockaddr_storage remote_addr_ss;
+	struct sockaddr *remote_addr = (struct sockaddr *)&remote_addr_ss;
+
+	char local_ip[INET6_ADDRSTRLEN];
+	unsigned short local_port;
+	char remote_ip[INET6_ADDRSTRLEN];
+	unsigned short remote_port;
+
+	struct addrinfo *rp;
+	for (rp = result; rp != NULL; rp = rp->ai_next) {
+		sfd = socket(rp->ai_family, rp->ai_socktype, 0);
+		if (sfd == -1) {
+			continue; // Try the next address
+		}
+		socklen_t local_addr_len = sizeof(struct sockaddr_storage);
+		getsockname(sfd, local_addr, &local_addr_len);
+		parse_sockaddr(local_addr, local_ip, &local_port);
+
+		addr_fam = rp->ai_family;
+		addr_len = rp->ai_addrlen;
+		memcpy(remote_addr, rp->ai_addr, sizeof(struct sockaddr_storage));
+		parse_sockaddr(remote_addr, remote_ip, &remote_port);
+
+		// close(sfd);
+	}
+
+	ssize_t nwritten = sendto(sfd, request, 8, 0, remote_addr, addr_len);
+	if (nwritten < 0) {
+		perror("send");
+		exit(EXIT_FAILURE);
+	}
+
+	unsigned char buf[256];
+	ssize_t nreceived = recvfrom(sfd, buf, sizeof(buf), 0, remote_addr, &addr_len);
+	printf("Response received: %ld bytes\n", nreceived);
+	print_bytes(buf, nreceived);
+	printf("\n");
+
+	unsigned char chunklen = buf[0];
+
+	char chunk[chunklen + 1];
+	memcpy(chunk, &buf[1], chunklen);
+	chunk[chunklen] = 0x0;
+
+	unsigned char opcode = buf[chunklen + 1];
+
+	unsigned short opparam;
+	memcpy(&opparam, &buf[chunklen + 2], 2);
+	opparam = ntohs(opparam);
+
+	unsigned int nonce;
+	memcpy(&nonce, &buf[chunklen + 4], 4);
+	nonce = ntohl(nonce);
+
+	printf("%x\n", chunklen);
+	printf("%s\n", chunk);
+	printf("%x\n", opcode);
+	printf("%x\n", opparam);
+	printf("%x\n", nonce);
+	}
 
 void print_bytes(unsigned char *bytes, int byteslen) {
 	int i, j, byteslen_adjusted;
