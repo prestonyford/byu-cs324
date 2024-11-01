@@ -22,7 +22,7 @@ int main(int argc, char *argv[]) {
 	char *server = argv[1];
 	char *port = argv[2];
 	unsigned char level = atoi(argv[3]);
-	short seed = atoi(argv[4]);
+	unsigned short seed = atoi(argv[4]);
 
 	// printf("Server: %s\n", server);
 	// printf("Port: %s\n", port);
@@ -33,16 +33,16 @@ int main(int argc, char *argv[]) {
 	unsigned char initial_request[8];
 	initial_request[0] = 0x0;
 	initial_request[1] = level;
-	uint32_t userID_n = htonl(USERID);
-	uint16_t seed_n = htons(seed);
+	unsigned int userID_n = htonl(USERID);
+	unsigned short seed_n = htons(seed);
 	memcpy(&initial_request[2], &userID_n, 4);
 	memcpy(&initial_request[6], &seed_n, 2);
 
-	// print_bytes(request, 8);
+	// print_bytes(initial_request, 8);
 
 	struct addrinfo hints;
 	memset(&hints, 0, sizeof(hints));
-	hints.ai_family = AF_UNSPEC; // Allow IPv4 or IPv6
+	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_DGRAM; // UDP socket
 	struct addrinfo *result;
 
@@ -69,7 +69,7 @@ int main(int argc, char *argv[]) {
 	struct addrinfo *rp;
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
 		sfd = socket(rp->ai_family, rp->ai_socktype, 0);
-		if (sfd == -1) {
+		if (sfd < 0) {
 			continue; // Try the next address
 		}
 		socklen_t local_addr_len = sizeof(struct sockaddr_storage);
@@ -80,11 +80,9 @@ int main(int argc, char *argv[]) {
 		addr_len = rp->ai_addrlen;
 		memcpy(remote_addr, rp->ai_addr, sizeof(struct sockaddr_storage));
 		parse_sockaddr(remote_addr, remote_ip, &remote_port);
-
-		// close(sfd);
 	}
 
-	unsigned char allchunks[1025];
+	unsigned char allchunks[1024];
 	ssize_t total_received = 0;
 
 	unsigned char *request = initial_request;
@@ -104,9 +102,8 @@ int main(int argc, char *argv[]) {
 
 		// chunklen, chunk, opcode, opparam, nonce
 		chunklen = buf[0];
-		char chunk[chunklen + 1];
+		unsigned char chunk[chunklen];
 		memcpy(chunk, &buf[1], chunklen);
-		chunk[chunklen] = 0x0;
 		opcode = buf[chunklen + 1];
 		memcpy(&opparam, &buf[chunklen + 2], 2);
 		opparam = ntohs(opparam);
@@ -125,9 +122,9 @@ int main(int argc, char *argv[]) {
 		request_size = sizeof(nonce);
 		int nextnonce = htonl(nonce + 1);
 		memcpy(request, &nextnonce, request_size);
-	} while (chunklen);
+	} while (chunklen > 0);
 
-	allchunks[total_received] = 0x0;
+	allchunks[total_received] = '\0';
 	printf("%s\n", allchunks);
 	
 	// printf("Response received: %ld bytes\n", nreceived);
