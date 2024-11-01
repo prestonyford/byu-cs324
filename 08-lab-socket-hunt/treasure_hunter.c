@@ -91,6 +91,7 @@ int main(int argc, char *argv[]) {
 	unsigned short opparam;
 	unsigned int nonce;
 	do {
+		// print_bytes(request, request_size);
 		ssize_t nwritten = sendto(sfd, request, request_size, 0, remote_addr, addr_len);
 		if (nwritten < 0) {
 			perror("send");
@@ -99,6 +100,7 @@ int main(int argc, char *argv[]) {
 
 		unsigned char buf[256];
 		ssize_t nreceived = recvfrom(sfd, buf, sizeof(buf), 0, remote_addr, &addr_len);
+		// print_bytes(buf, nreceived);
 
 		// chunklen, chunk, opcode, opparam, nonce
 		chunklen = buf[0];
@@ -122,6 +124,12 @@ int main(int argc, char *argv[]) {
 		request_size = sizeof(nonce);
 		int nextnonce = htonl(nonce + 1);
 		memcpy(request, &nextnonce, request_size);
+
+		if (opcode == 1) {
+			remote_port = opparam;
+			populate_sockaddr(remote_addr, addr_fam, remote_ip, remote_port); 
+		}
+
 	} while (chunklen > 0);
 
 	allchunks[total_received] = '\0';
