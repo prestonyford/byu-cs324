@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <netdb.h>
+#include <unistd.h>
 
 #include "sockhelper.h"
 
@@ -128,6 +129,14 @@ int main(int argc, char *argv[]) {
 		if (opcode == 1) {
 			remote_port = opparam;
 			populate_sockaddr(remote_addr, addr_fam, remote_ip, remote_port); 
+		} else if (opcode == 2) {
+			local_port = opparam;
+			populate_sockaddr(local_addr, addr_fam, NULL, local_port);
+			close(sfd);
+			sfd = socket(addr_fam, SOCK_DGRAM, 0);
+			if (bind(sfd, local_addr, sizeof(struct sockaddr_storage)) < 0) {
+				perror("bind()");
+			}
 		}
 
 	} while (chunklen > 0);
