@@ -1,0 +1,29 @@
+*   Trying 2620:10f:3007:a002:a6bb:6dff:fe81:9168:1024...
+* connect to 2620:10f:3007:a002:a6bb:6dff:fe81:9168 port 1024 failed: Connection refused
+*   Trying 192.168.2.130:1024...
+* Connected to arizona (192.168.2.130) port 1024 (#0)
+> GET /foo.html HTTP/1.1
+> Host: arizona:1024
+> User-Agent: curl/7.81.0
+> Accept: */*
+> 
+* Mark bundle as not supporting multiuse
+* HTTP 1.0, assume close after body
+< HTTP/1.0 200 OK
+< Server: SimpleHTTP/0.6 Python/3.10.12
+< Date: Thu, 07 Nov 2024 02:31:38 GMT
+< Content-type: text/html
+< Content-Length: 129
+< Last-Modified: Thu, 05 Sep 2024 03:35:34 GMT
+< 
+{ [129 bytes data]
+* Closing connection 0
+<html>
+	<head>
+		<title>CS 324</title>
+	</head>
+	<body>
+		<h1>CS 324</h1>
+		<img src="socket.jpg" alt="socket">
+	</body>
+</html>

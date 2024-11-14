@@ -105,6 +105,13 @@ int main(int argc, char *argv[]) {
 
 		// chunklen, chunk, opcode, opparam, nonce
 		chunklen = buf[0];
+		if(chunklen == 0) {
+			break;
+		} else if(chunklen > 127) {
+			printf("Error: %x\n", chunklen);
+			exit(1);
+		}
+
 		unsigned char chunk[chunklen];
 		memcpy(chunk, &buf[1], chunklen);
 		opcode = buf[chunklen + 1];
@@ -115,16 +122,12 @@ int main(int argc, char *argv[]) {
 
 		memcpy(&allchunks[total_received], chunk, chunklen);
 		total_received += chunklen;
+
 		// printf("%x\n", chunklen);
 		// printf("%s\n", chunk);
 		// printf("%x\n", opcode);
 		// printf("%x\n", opparam);
 		// printf("%x\n", nonce);
-
-		memset(request, 0, request_size);
-		request_size = sizeof(nonce);
-		int nextnonce = htonl(nonce + 1);
-		memcpy(request, &nextnonce, request_size);
 
 		if (opcode == 1) {
 			remote_port = opparam;
@@ -137,7 +140,70 @@ int main(int argc, char *argv[]) {
 			if (bind(sfd, local_addr, sizeof(struct sockaddr_storage)) < 0) {
 				perror("bind()");
 			}
+		} else if (opcode == 3) {
+			unsigned short m = opparam;
+			nonce = 0;
+			unsigned char buf4[1];
+			buf4[0] = 0;
+			for (int i = 0; i < m; ++i) {
+				struct sockaddr_storage m_addr_ss;
+				struct sockaddr *m_addr = (struct sockaddr *)&m_addr_ss;
+				socklen_t m_addr_len = sizeof(m_addr_ss);
+				// populate_sockaddr(m_addr, addr_fam, remote_ip, local_port);
+				recvfrom(sfd, buf4, 1, 0, m_addr, &m_addr_len);
+
+				char ip[INET6_ADDRSTRLEN];
+				unsigned short p;
+
+				parse_sockaddr(m_addr, ip, &p);
+				nonce += p;
+			}
+			//++nonce;
+		} else if (opcode == 4) {
+			remote_port = opparam;
+			populate_sockaddr(remote_addr, addr_fam, remote_ip, remote_port); 
+
+			struct addrinfo p4_hints;
+			memset(&p4_hints, 0, sizeof(p4_hints));
+			addr_fam = addr_fam == AF_INET ? AF_INET6 : AF_INET;
+			p4_hints.ai_family = addr_fam;
+			p4_hints.ai_socktype = SOCK_DGRAM;
+			struct addrinfo *p4_result;
+
+			char port_str[6];
+			sprintf(port_str, "%d", remote_port);
+			int p4_status = getaddrinfo(server, port_str, &p4_hints, &p4_result);
+			if (p4_status != 0) {
+				fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(status));
+				exit(EXIT_FAILURE);
+			}
+
+			struct addrinfo *p4_rp;
+			int new_sfd;
+			for (p4_rp = p4_result; p4_rp != NULL; p4_rp = p4_rp->ai_next) {
+				new_sfd = socket(p4_rp->ai_family, p4_rp->ai_socktype, 0);
+				if (new_sfd < 0) {
+					continue; // Try the next address
+				}
+				close(sfd);
+				sfd = new_sfd;
+				socklen_t local_addr_len = sizeof(struct sockaddr_storage);
+				getsockname(sfd, local_addr, &local_addr_len);
+				parse_sockaddr(local_addr, local_ip, &local_port);
+
+				addr_fam = p4_rp->ai_family;
+				addr_len = p4_rp->ai_addrlen;
+				memcpy(remote_addr, p4_rp->ai_addr, sizeof(struct sockaddr_storage));
+				parse_sockaddr(remote_addr, remote_ip, &remote_port);
+			}
 		}
+
+		
+
+		memset(request, 0, request_size);
+		request_size = sizeof(nonce);
+		int nextnonce = htonl(nonce + 1);
+		memcpy(request, &nextnonce, request_size);
 
 	} while (chunklen > 0);
 
