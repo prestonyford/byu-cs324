@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include "sockhelper.h"
 
@@ -8,6 +10,8 @@
 
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:97.0) Gecko/20100101 Firefox/97.0";
 
+int open_sfd(unsigned short);
+void handle_client(int);
 int complete_request_received(char *);
 void parse_request(char *, char *, char *, char *, char *);
 void test_parser();
@@ -16,9 +20,78 @@ void print_bytes(unsigned char *, int);
 
 int main(int argc, char *argv[])
 {
+	if (argc < 2) {
+		printf("Missing port\n");
+		exit(1);
+	}
 	// test_parser();
-	printf("%s\n", user_agent_hdr);
+	unsigned short port = atoi(argv[1]);
+	int sfd = open_sfd(port);
+
+	while(1) {
+		struct sockaddr_storage remote_addr_ss;
+		struct sockaddr *remote_addr = (struct sockaddr *)&remote_addr_ss;
+		socklen_t addr_len = sizeof(struct sockaddr_storage);
+
+		int connfd;
+		if ((connfd = accept(sfd, remote_addr, &addr_len)) < 0) {
+			perror("accept() failed");
+		}
+		handle_client(connfd);
+	}
+
+	// printf("%s\n", user_agent_hdr);
 	return 0;
+}
+
+int open_sfd(unsigned short port) {
+	int sfd;
+	if ((sfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+		perror("Error creating socket");
+		exit(EXIT_FAILURE);
+	}
+	int optval = 1;
+	setsockopt(sfd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+
+	struct sockaddr_storage local_addr_ss;
+	struct sockaddr *local_addr = (struct sockaddr *)&local_addr_ss;
+	populate_sockaddr(local_addr, AF_INET, NULL, port);
+	if (bind(sfd, local_addr, sizeof(struct sockaddr_storage)) < 0) {
+		perror("Could not bind");
+		exit(EXIT_FAILURE);
+	}
+
+	if (listen(sfd, 100) < 0) {
+		perror("Could not listen");
+		exit(EXIT_FAILURE);
+	}
+
+	return sfd;
+}
+
+void handle_client(int sockfd) {
+	size_t BUF_SIZE = 1024;
+	unsigned char buf[BUF_SIZE];
+	ssize_t nread;
+	int total_read = 0;
+
+	while ((nread = recv(sockfd, buf + total_read, BUF_SIZE - total_read - 1, 0)) > 0) {
+		total_read += nread;
+		buf[total_read] = '\0';
+		
+		if (complete_request_received((char *)buf)) {
+			break;
+		}
+	}
+
+	print_bytes(buf, total_read);
+
+	buf[total_read] = '\0';
+	char method[16], hostname[64], port[8], path[64];
+	parse_request((char *)buf, method, hostname, port, path);
+	printf("%s\n%s\n%s\n%s\n", method, hostname, port, path);
+
+	close(sockfd);
 }
 
 int complete_request_received(char *request) {
