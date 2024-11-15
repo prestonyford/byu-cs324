@@ -84,12 +84,25 @@ void handle_client(int sockfd) {
 		}
 	}
 
-	print_bytes(buf, total_read);
+	// print_bytes(buf, total_read);
 
 	buf[total_read] = '\0';
 	char method[16], hostname[64], port[8], path[64];
 	parse_request((char *)buf, method, hostname, port, path);
-	printf("%s\n%s\n%s\n%s\n", method, hostname, port, path);
+	// printf("Method: %s\nHostname: %s\nPort: %s\nPath: %s\n", method, hostname, port, path);
+
+	char request[1024];
+	ssize_t request_size = sprintf(request, 
+		"%s %s HTTP/1.0\r\n"
+		"Host: %s\r\n"
+		"User-Agent: %s\r\n"
+		"Connection: close\r\n"
+		"Proxy-Connection: close\r\n\r\n"
+	, method, path, hostname, user_agent_hdr);
+
+	request[request_size] = '\0';
+	print_bytes((unsigned char *)request, request_size);
+	printf("%s\n", request);
 
 	close(sockfd);
 }
