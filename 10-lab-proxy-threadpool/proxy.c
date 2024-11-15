@@ -5,6 +5,7 @@
 #include <netdb.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <pthread.h>
 
 #include "sockhelper.h"
 
@@ -14,6 +15,7 @@
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:97.0) Gecko/20100101 Firefox/97.0";
 
 int open_sfd(unsigned short);
+void *client_thread(void *);
 void handle_client(int);
 int complete_request_received(char *);
 void parse_request(char *, char *, char *, char *, char *);
@@ -40,8 +42,11 @@ int main(int argc, char *argv[])
 		if ((connfd = accept(sfd, remote_addr, &addr_len)) < 0) {
 			perror("accept() failed");
 		}
-		handle_client(connfd);
-	}
+		pthread_t thread;
+		int *arg = malloc(sizeof connfd);
+		*arg = connfd;
+		pthread_create(&thread, NULL, client_thread, arg);
+	} 
 
 	// printf("%s\n", user_agent_hdr);
 	return 0;
@@ -70,6 +75,12 @@ int open_sfd(unsigned short port) {
 	}
 
 	return sfd;
+}
+
+void *client_thread(void *arg) {
+	pthread_detach(pthread_self());
+	handle_client(*((int *)arg));
+	return NULL;
 }
 
 void handle_client(int clientfd) {
@@ -120,7 +131,7 @@ void handle_client(int clientfd) {
 	struct sockaddr *remote_addr = (struct sockaddr *)&remote_addr_ss;
 
 	struct addrinfo *rp;
-	int serverfd;
+	int serverfd = -1;
 	for (rp = res; rp != NULL; rp = rp->ai_next) {
 		serverfd = socket(rp->ai_family, rp->ai_socktype, 0);
 		if (serverfd < 0) {
@@ -136,6 +147,11 @@ void handle_client(int clientfd) {
 
 		perror("Connect failed");
 		close(serverfd);
+	}
+	if (serverfd == -1) {
+		fprintf(stderr, "Failed to create and connect to server.\n");
+		freeaddrinfo(res);
+		return;
 	}
 	freeaddrinfo(res);
 
