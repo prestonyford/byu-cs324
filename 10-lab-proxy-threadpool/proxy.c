@@ -2,6 +2,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 
 #include "sockhelper.h"
 
@@ -69,13 +72,13 @@ int open_sfd(unsigned short port) {
 	return sfd;
 }
 
-void handle_client(int sockfd) {
+void handle_client(int clientfd) {
 	size_t BUF_SIZE = 1024;
 	unsigned char buf[BUF_SIZE];
 	ssize_t nread;
 	int total_read = 0;
 
-	while ((nread = recv(sockfd, buf + total_read, BUF_SIZE - total_read - 1, 0)) > 0) {
+	while ((nread = recv(clientfd, buf + total_read, BUF_SIZE - total_read - 1, 0)) > 0) {
 		total_read += nread;
 		buf[total_read] = '\0';
 		
@@ -86,10 +89,10 @@ void handle_client(int sockfd) {
 
 	// print_bytes(buf, total_read);
 
-	buf[total_read] = '\0';
+	// buf[total_read] = '\0';
 	char method[16], hostname[64], port[8], path[64];
 	parse_request((char *)buf, method, hostname, port, path);
-	// printf("Method: %s\nHostname: %s\nPort: %s\nPath: %s\n", method, hostname, port, path);
+	printf("Method: %s\nHostname: %s\nPort: %s\nPath: %s\n", method, hostname, port, path);
 
 	char request[1024];
 	ssize_t request_size = sprintf(request, 
@@ -100,11 +103,66 @@ void handle_client(int sockfd) {
 		"Proxy-Connection: close\r\n\r\n"
 	, method, path, hostname, user_agent_hdr);
 
-	request[request_size] = '\0';
-	print_bytes((unsigned char *)request, request_size);
-	printf("%s\n", request);
+	// request[request_size] = '\0';
+	// print_bytes((unsigned char *)request, request_size);
+	// printf("%s\n", request);
 
-	close(sockfd);
+	struct addrinfo hints, *res;
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	int gai_result;
+	if ((gai_result = getaddrinfo(hostname, port, &hints, &res)) != 0) {
+		printf("getaddrinfo failed: %s\n", gai_strerror(gai_result));
+	}
+
+	struct sockaddr_storage remote_addr_ss;
+	struct sockaddr *remote_addr = (struct sockaddr *)&remote_addr_ss;
+
+	struct addrinfo *rp;
+	int serverfd;
+	for (rp = res; rp != NULL; rp = rp->ai_next) {
+		serverfd = socket(rp->ai_family, rp->ai_socktype, 0);
+		if (serverfd < 0) {
+			perror("Socket failed");
+    		close(serverfd);
+			continue;
+		}
+		memcpy(remote_addr, rp->ai_addr, sizeof(struct sockaddr_storage));
+		
+		if (connect(serverfd, remote_addr, rp->ai_addrlen) >= 0) {
+			break;
+		}
+
+		perror("Connect failed");
+		close(serverfd);
+	}
+	freeaddrinfo(res);
+
+	ssize_t bytes_sent = send(serverfd, request, request_size, 0);
+	if (bytes_sent < 0) {
+		perror("Send failed");
+		close(serverfd);
+		return;
+	}
+	unsigned char response_buf[16384];
+	ssize_t nread_response;
+	int total_read_response = 0;
+	while ((nread_response = recv(serverfd, response_buf + total_read_response, 16384 - total_read_response - 1, 0)) > 0) {
+		total_read_response += nread_response;
+		
+		if (nread_response == 0) {
+			close(serverfd);
+			break;
+		}
+	}
+	
+	// request[total_read_response] = '\0';
+	// print_bytes(response_buf, total_read_response);
+	// printf("%s\n", (char *)response_buf);
+
+	send(clientfd, response_buf, total_read_response, 0);
+	close(clientfd);
 }
 
 int complete_request_received(char *request) {
@@ -122,9 +180,6 @@ void parse_request(char *request, char *method,
 	method[method_end - method_start] = '\0';
 
 	char *hostname_start = strstr(request, "://") + 3;
-	char *hostname_end = strstr(hostname_start, "/");
-	memcpy(hostname, hostname_start, hostname_end - hostname_start);
-	hostname[hostname_end - hostname_start] = '\0';
 
 	char *port_start;
 	char *path_start;
@@ -134,9 +189,17 @@ void parse_request(char *request, char *method,
 		memcpy(port, port_start, port_end - port_start);
 		port[port_end - port_start] = '\0';
 
+		char *hostname_end = strstr(hostname_start, ":");
+		memcpy(hostname, hostname_start, hostname_end - hostname_start);
+		hostname[hostname_end - hostname_start] = '\0';
+
 		path_start = port_end;
 	} else {
 		memcpy(port, "80", 3);
+
+		char *hostname_end = strstr(hostname_start, "/");
+		memcpy(hostname, hostname_start, hostname_end - hostname_start);
+		hostname[hostname_end - hostname_start] = '\0';
 
 		path_start = hostname_end;
 	}
