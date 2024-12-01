@@ -3,6 +3,12 @@
         "*.ejs": "html",
         "stdio.h": "c",
         "stdlib.h": "c",
-        "inet.h": "c"
+        "inet.h": "c",
+        "array": "c",
+        "deque": "c",
+        "vector": "c",
+        "string_view": "c",
+        "semaphore.h": "c",
+        "sbuf.h": "c"
     }
 }
