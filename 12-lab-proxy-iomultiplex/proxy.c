@@ -16,6 +16,7 @@
 
 /* Recommended max object size */
 #define MAX_OBJECT_SIZE 102400
+#define BUF_SIZE 1024
 #define NUM_THREADS 8
 #define NUM_SLOTS 5
 
@@ -30,7 +31,7 @@ struct request_info {
 	int client_sfd;
 	int server_sfd;
 	int state;
-	char buf[MAX_OBJECT_SIZE];
+	unsigned char buf[BUF_SIZE];
 	int num_bytes_read_from_client;
 	int num_bytes_to_write_to_server;
 	int num_bytes_written_to_server;
@@ -42,8 +43,8 @@ struct request_info {
 static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:97.0) Gecko/20100101 Firefox/97.0";
 
 int open_sfd(unsigned short);
-void *client_thread(void *);
 void handle_new_clients(int, int);
+void handle_client(struct request_info *, int);
 int complete_request_received(char *);
 void parse_request(char *, char *, char *, char *, char *);
 void test_parser();
@@ -88,8 +89,8 @@ int main(int argc, char *argv[])
 			// Listening socket event; new client
 			if (sfd == active_client->client_sfd) {
 				handle_new_clients(sfd, efd);
-			} else { // existing client event; TODO
-
+			} else { // existing client event;
+				handle_client(active_client, efd);
 			}
 		}
 	}
@@ -146,7 +147,7 @@ void handle_new_clients(int sfd, int efd) {
 		
 		struct request_info *rinfo = malloc(sizeof(struct request_info));
 		rinfo->client_sfd = cfd;
-		rinfo->server_sfd = 0; // ?
+		rinfo->server_sfd = 0;
 		rinfo->state = READ_REQUEST;
 		rinfo->num_bytes_read_from_client = 0;
 		rinfo->num_bytes_to_write_to_server = 0;
@@ -157,7 +158,7 @@ void handle_new_clients(int sfd, int efd) {
 		// register the socket file descriptor for incoming events using
 		// edge-triggered monitoring
 		struct epoll_event event;
-		event.data.ptr = &rinfo;
+		event.data.ptr = rinfo;
 		event.events = EPOLLIN | EPOLLET;
 		if (epoll_ctl(efd, EPOLL_CTL_ADD, cfd, &event) < 0) {
 			fprintf(stderr, "error adding event\n");
@@ -170,6 +171,119 @@ void handle_new_clients(int sfd, int efd) {
 		// No more clients pending
 	} else {
 		perror("Error in accept()");
+	}
+}
+
+void handle_client(struct request_info *rinfo, int efd) {
+	printf("Handling client with\n\tfd: %d\n\tstate: %d\n", rinfo->client_sfd, rinfo->state);
+
+	switch (rinfo->state) {
+		case READ_REQUEST:
+			ssize_t nread;
+			int total_read = 0;
+
+			while ((nread = recv(rinfo->client_sfd, rinfo->buf + total_read, BUF_SIZE - total_read - 1, 0)) > 0) {
+				total_read += nread;
+				rinfo->buf[total_read] = '\0';
+				
+				if (complete_request_received((char *)rinfo->buf)) {
+					break;
+				}
+			}
+			if (nread == 0) {
+				close(rinfo->client_sfd);
+				free(rinfo);
+				return;
+			} else if (nread < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+				perror("Error in recv()");
+				close(rinfo->client_sfd);
+				free(rinfo);
+				return;
+			}
+
+			print_bytes(rinfo->buf, total_read);
+			char method[16], hostname[64], port[8], path[64];
+			parse_request((char *)rinfo->buf, method, hostname, port, path);
+			printf("Method: %s\nHostname: %s\nPort: %s\nPath: %s\n", method, hostname, port, path);
+
+			// Create request to remote
+			char request[1024];
+			ssize_t request_size = sprintf(request, 
+				"%s %s HTTP/1.0\r\n"
+				"Host: %s\r\n"
+				"User-Agent: %s\r\n"
+				"Connection: close\r\n"
+				"Proxy-Connection: close\r\n\r\n"
+			, method, path, hostname, user_agent_hdr);
+
+			request[request_size] = '\0';
+			print_bytes((unsigned char *)request, request_size);
+			
+			// Connect to remote
+			struct addrinfo hints, *res;
+			memset(&hints, 0, sizeof(struct addrinfo));
+			hints.ai_family = AF_INET;
+			hints.ai_socktype = SOCK_STREAM;
+			int gai_result;
+			if ((gai_result = getaddrinfo(hostname, port, &hints, &res)) != 0) {
+				printf("getaddrinfo failed: %s\n", gai_strerror(gai_result));
+			}
+
+			struct sockaddr_storage remote_addr_ss;
+			struct sockaddr *remote_addr = (struct sockaddr *)&remote_addr_ss;
+
+			struct addrinfo *rp;
+			int serverfd = -1;
+			for (rp = res; rp != NULL; rp = rp->ai_next) {
+				serverfd = socket(rp->ai_family, rp->ai_socktype, 0);
+				if (serverfd < 0) {
+					perror("Socket failed");
+					close(serverfd);
+					continue;
+				}
+				memcpy(remote_addr, rp->ai_addr, sizeof(struct sockaddr_storage));
+				
+				if (connect(serverfd, remote_addr, rp->ai_addrlen) >= 0) {
+					break;
+				}
+
+				perror("Connect failed");
+				close(serverfd);
+			}
+			if (serverfd == -1) {
+				fprintf(stderr, "Failed to create and connect to server.\n");
+				freeaddrinfo(res);
+				return;
+			}
+			freeaddrinfo(res);
+			rinfo->server_sfd = serverfd;
+
+			// Configure remote socket as nonblocking
+			if (fcntl(rinfo->server_sfd, F_SETFL, fcntl(rinfo->server_sfd, F_GETFL, 0) | O_NONBLOCK) < 0) {
+				fprintf(stderr, "error setting socket option for listening socket\n");
+				exit(1);
+			}
+
+			// Remove from epoll
+			epoll_ctl(efd, EPOLL_CTL_DEL, rinfo->client_sfd, NULL);
+
+			// Register server with epoll for writing
+			struct epoll_event event;
+			event.data.ptr = rinfo;
+			event.events = EPOLLOUT | EPOLLET;
+			if (epoll_ctl(efd, EPOLL_CTL_ADD, rinfo->server_sfd, &event) < 0) {
+				fprintf(stderr, "error adding event\n");
+				exit(EXIT_FAILURE);
+			}
+			rinfo->state = SEND_REQUEST;
+			
+			return;
+		case SEND_REQUEST:
+			break;
+		case READ_RESPONSE:
+			break;
+		case SEND_RESPONSE:
+			break;
 	}
 }
 
